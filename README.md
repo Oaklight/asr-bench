@@ -28,6 +28,8 @@ This experiment measures real-world performance to determine which engine to use
 |-------|------|---------|
 | [SenseVoice-Small](https://github.com/FunAudioLLM/SenseVoice) (INT8) | 229 MB | ASR — 50+ languages, zh/en/ja/ko/yue |
 | [Silero VAD](https://github.com/snakers4/silero-vad) v4 | 629 KB | Voice Activity Detection |
+| [Qwen3-ASR-0.6B](https://github.com/QwenLM/Qwen3-ASR) (INT8) | 938 MB | ASR — 30+ languages, autoregressive |
+| [FireRedASR2-CTC](https://github.com/modelscope/FunASR) (INT8) | ~500 MB | ASR — zh+en, CTC non-autoregressive |
 
 ## Results
 
@@ -102,6 +104,23 @@ For the [asr2clip](https://github.com/oaklight/asr2clip) project, the migration 
 - Replace numpy-based VAD with sherpa-onnx's built-in Silero VAD
 - Replace remote API ASR with sherpa-onnx's local SenseVoice-Small
 - Single `pip install sherpa-onnx` — no OpenVINO, no CUDA, no complexity
+
+### Extended Model Comparison
+
+Additional models were benchmarked via sherpa-onnx to evaluate alternatives to SenseVoice-Small:
+
+| Model | Params | Load (ms) | Mem (MB) | Infer zh (ms) | RTF | zh/en Quality | Multilingual |
+|-------|--------|-----------|----------|---------------|-----|---------------|--------------|
+| **SenseVoice-Small INT8** | 234M | 2,299 | 310 | **91** | **0.016** | Good | Excellent (50+ langs) |
+| Qwen3-ASR-0.6B INT8 | 600M | 4,475 | 893 | 913 | 0.163 | Better (punctuation) | Excellent (30+ langs) |
+| FireRedASR2-CTC INT8 | ~1B | 1,509 | 103 | 681 | 0.122 | Good | Poor (zh+en only) |
+
+Key observations:
+- **SenseVoice-Small is 10x faster** than Qwen3-ASR and 7.5x faster than FireRedASR2-CTC
+- Qwen3-ASR produces slightly higher quality Chinese output (with punctuation, traditional characters) but the autoregressive decoder makes it far too slow for real-time use on CPU
+- FireRedASR2-CTC has the smallest memory footprint (103MB) but fails on non-zh/en languages (Japanese/Korean output is garbage)
+- Qwen3-ASR-1.7B is not yet available as a sherpa-onnx ONNX export (only 0.6B exists)
+- **SenseVoice-Small remains the best choice** for asr2clip: fastest inference, good multilingual support, reasonable memory usage
 
 ## Reproduction
 
