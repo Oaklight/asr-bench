@@ -1,0 +1,6 @@
+models/
+test_audio/
+results/
+__pycache__/
+*.pyc
+.claude/
