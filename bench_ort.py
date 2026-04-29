@@ -384,6 +384,49 @@ def bench_vad(
     return results
 
 
+def _run_in_subprocess(func_name: str, *args) -> dict:
+    """Run a benchmark function in an isolated subprocess for accurate memory measurement.
+
+    Args:
+        func_name: Name of the function to run (must be defined in this module).
+        *args: Arguments to pass as JSON-serializable data.
+
+    Returns:
+        Benchmark results dict from the subprocess.
+    """
+    import subprocess
+    import sys
+
+    # Build a command that imports this module and calls the function
+    arg_json = json.dumps(args)
+    code = (
+        f"import json, sys; sys.path.insert(0, {str(SCRIPT_DIR)!r}); "
+        f"from bench_ort import {func_name}, get_providers; "
+        f"args = json.loads({arg_json!r}); "
+        f"result = {func_name}(*args); "
+        f"print(json.dumps(result, ensure_ascii=False))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+    if result.returncode != 0:
+        # Print stderr for debugging but extract JSON from stdout
+        print(result.stderr, end="")
+
+    # Find the last line of stdout that is valid JSON (benchmark output)
+    for line in reversed(result.stdout.strip().split("\n")):
+        line = line.strip()
+        if line.startswith("{"):
+            return json.loads(line)
+
+    raise RuntimeError(f"Subprocess failed: {result.stderr}")
+
+
 def main():
     RESULTS_DIR.mkdir(exist_ok=True)
     audio_files = get_audio_files()
@@ -404,14 +447,21 @@ def main():
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
-    print("\n=== SenseVoice ASR Benchmark (raw model inference) ===")
-    all_results["asr"] = bench_sensevoice(providers_list)
+    # Run ASR and VAD in separate subprocesses for accurate memory measurement
+    print("\n=== SenseVoice ASR Benchmark (raw model inference, isolated process) ===")
+    all_results["asr"] = _run_in_subprocess("bench_sensevoice", providers_list)
 
     if audio_files:
-        print("\n=== Silero VAD Benchmark ===")
-        all_results["vad"] = bench_vad(providers_list, audio_files)
+        print("\n=== Silero VAD Benchmark (isolated process) ===")
+        all_results["vad"] = _run_in_subprocess("bench_vad", providers_list, audio_files)
     else:
         print("\n[skip] No audio files for VAD benchmark")
+
+    # Print summary
+    for section in ("asr", "vad"):
+        if section in all_results:
+            print(f"\n--- {section.upper()} results ---")
+            print(json.dumps(all_results[section], indent=2, ensure_ascii=False)[:2000])
 
     out_path = RESULTS_DIR / "ort_results.json"
     with open(out_path, "w") as f:

@@ -290,6 +290,46 @@ def bench_combined(audio_files: list[tuple[str, str]]) -> dict:
     return results
 
 
+def _run_in_subprocess(func_name: str, *args) -> dict:
+    """Run a benchmark function in an isolated subprocess for accurate memory measurement.
+
+    Args:
+        func_name: Name of the function to run (must be defined in this module).
+        *args: Arguments to pass as JSON-serializable data.
+
+    Returns:
+        Benchmark results dict from the subprocess.
+    """
+    import subprocess
+    import sys
+
+    arg_json = json.dumps(args)
+    code = (
+        f"import json, sys; sys.path.insert(0, {str(SCRIPT_DIR)!r}); "
+        f"from bench_sherpa import {func_name}; "
+        f"args = json.loads({arg_json!r}); "
+        f"result = {func_name}(*args); "
+        f"print(json.dumps(result, ensure_ascii=False))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+    if result.returncode != 0:
+        print(result.stderr, end="")
+
+    for line in reversed(result.stdout.strip().split("\n")):
+        line = line.strip()
+        if line.startswith("{"):
+            return json.loads(line)
+
+    raise RuntimeError(f"Subprocess failed: {result.stderr}")
+
+
 def main():
     RESULTS_DIR.mkdir(exist_ok=True)
     audio_files = get_audio_files()
@@ -308,14 +348,21 @@ def main():
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
-    print("=== ASR Benchmark ===")
-    all_results["asr"] = bench_asr(audio_files)
+    # Run each benchmark in a separate subprocess for accurate memory measurement
+    print("=== ASR Benchmark (isolated process) ===")
+    all_results["asr"] = _run_in_subprocess("bench_asr", audio_files)
 
-    print("\n=== VAD Benchmark ===")
-    all_results["vad"] = bench_vad(audio_files)
+    print("\n=== VAD Benchmark (isolated process) ===")
+    all_results["vad"] = _run_in_subprocess("bench_vad", audio_files)
 
-    print("\n=== Combined VAD+ASR Pipeline ===")
-    all_results["combined"] = bench_combined(audio_files)
+    print("\n=== Combined VAD+ASR Pipeline (isolated process) ===")
+    all_results["combined"] = _run_in_subprocess("bench_combined", audio_files)
+
+    # Print summary
+    for section in ("asr", "vad", "combined"):
+        if section in all_results:
+            print(f"\n--- {section.upper()} results ---")
+            print(json.dumps(all_results[section], indent=2, ensure_ascii=False)[:2000])
 
     out_path = RESULTS_DIR / "sherpa_results.json"
     with open(out_path, "w") as f:
